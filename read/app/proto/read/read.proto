@@ -1,0 +1,21 @@
+syntax = "proto3"; // 指定 proto 版本
+
+package read;     // 指定包名
+
+// 定义服务
+service Read {
+
+	// 定义方法
+	rpc ReadData(Request) returns (Response) {}
+
+}
+
+// Request 请求结构
+message Request {
+	string name = 1;
+}
+
+// Response 响应结构
+message Response {
+    string message = 1;
+}
