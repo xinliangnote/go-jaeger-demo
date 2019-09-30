@@ -6,7 +6,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"github.com/uber/jaeger-client-go"
-	"github.com/opentracing/opentracing-go/log"
 	jaegerConfig "github.com/uber/jaeger-client-go/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/grpclog"
@@ -15,16 +14,12 @@ import (
 	"strings"
 )
 
-var Tracer opentracing.Tracer
-var Closer io.Closer
-var Error  error
-
-var ParentContext context.Context
-
 // ServerOption grpc server option
 func ServerOption(tracer opentracing.Tracer) grpc.ServerOption {
 	return grpc.UnaryInterceptor(serverInterceptor(tracer))
 }
+
+var Tracer opentracing.Tracer
 
 func NewJaegerTracer(serviceName string, jaegerHostPort string) (opentracing.Tracer, io.Closer, error) {
 
@@ -42,53 +37,17 @@ func NewJaegerTracer(serviceName string, jaegerHostPort string) (opentracing.Tra
 		ServiceName: serviceName,
 	}
 
-	Tracer, Closer, Error = cfg.NewTracer(jaegerConfig.Logger(jaeger.StdLogger))
-	if Error != nil {
-		panic(fmt.Sprintf("ERROR: cannot init Jaeger: %v\n", Error))
+	Tracer, closer, err := cfg.NewTracer(jaegerConfig.Logger(jaeger.StdLogger))
+
+	if err != nil {
+		panic(fmt.Sprintf("ERROR: cannot init Jaeger: %v\n", err))
 	}
 	opentracing.SetGlobalTracer(Tracer)
-	return Tracer, Closer, Error
+	return Tracer, closer, err
 }
 
 type MDReaderWriter struct {
 	metadata.MD
-}
-
-// ClientInterceptor grpc client
-func ClientInterceptor(tracer opentracing.Tracer, parentContext context.Context) grpc.UnaryClientInterceptor {
-	return func(ctx context.Context, method string,
-
-		req, reply interface{}, cc *grpc.ClientConn,
-		invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-
-		span, _ := opentracing.StartSpanFromContext(
-			parentContext,
-			"call gRPC",
-			opentracing.Tag{Key: string(ext.Component), Value: "gRPC"},
-			ext.SpanKindRPCClient,
-		)
-		defer span.Finish()
-
-		md, ok := metadata.FromOutgoingContext(ctx)
-		if !ok {
-			md = metadata.New(nil)
-		} else {
-			md = md.Copy()
-		}
-
-		mdWriter := MDReaderWriter{md}
-		err := tracer.Inject(span.Context(), opentracing.TextMap, mdWriter)
-		if err != nil {
-			span.LogFields(log.String("inject-error", err.Error()))
-		}
-
-		newCtx := metadata.NewOutgoingContext(ctx, md)
-		err = invoker(newCtx, method, req, reply, cc, opts...)
-		if err != nil {
-			span.LogFields(log.String("call-error", err.Error()))
-		}
-		return err
-	}
 }
 
 // ForeachKey implements ForeachKey of opentracing.TextMapReader
@@ -116,6 +75,8 @@ func serverInterceptor(tracer opentracing.Tracer) grpc.UnaryServerInterceptor {
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler) (resp interface{}, err error) {
 
+		var parentContext context.Context
+
 		md, ok := metadata.FromIncomingContext(ctx)
 		if !ok {
 			md = metadata.New(nil)
@@ -133,9 +94,9 @@ func serverInterceptor(tracer opentracing.Tracer) grpc.UnaryServerInterceptor {
 			)
 			defer span.Finish()
 
-			ParentContext = opentracing.ContextWithSpan(ctx, span)
+			parentContext = opentracing.ContextWithSpan(ctx, span)
 		}
 
-		return handler(ParentContext, req)
+		return handler(parentContext, req)
 	}
 }

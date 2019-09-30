@@ -1,6 +1,7 @@
 package util
 
 import (
+	"context"
 	"crypto/tls"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
@@ -11,10 +12,10 @@ import (
 	"read/app/util/jaeger_service"
 )
 
-func HttpGet(url string) (string, error) {
+func HttpGet(url string, ctx context.Context) (string, error) {
 
 	span, _ := opentracing.StartSpanFromContext(
-		jaeger_service.ParentContext,
+		ctx,
 		"call Http Get",
 		opentracing.Tag{Key: string(ext.Component), Value: "HTTP"},
 		ext.SpanKindRPCClient,

@@ -15,16 +15,12 @@ import (
 	"strings"
 )
 
-var Tracer opentracing.Tracer
-var Closer io.Closer
-var Error  error
-
-var ParentContext context.Context
-
 // ServerOption grpc server option
 func ServerOption(tracer opentracing.Tracer) grpc.ServerOption {
 	return grpc.UnaryInterceptor(serverInterceptor(tracer))
 }
+
+var Tracer opentracing.Tracer
 
 func NewJaegerTracer(serviceName string, jaegerHostPort string) (opentracing.Tracer, io.Closer, error) {
 
@@ -42,12 +38,16 @@ func NewJaegerTracer(serviceName string, jaegerHostPort string) (opentracing.Tra
 		ServiceName: serviceName,
 	}
 
-	Tracer, Closer, Error = cfg.NewTracer(jaegerConfig.Logger(jaeger.StdLogger))
-	if Error != nil {
-		panic(fmt.Sprintf("ERROR: cannot init Jaeger: %v\n", Error))
+	var closer io.Closer
+	var err error
+
+	Tracer, closer, err = cfg.NewTracer(jaegerConfig.Logger(jaeger.StdLogger))
+
+	if err != nil {
+		panic(fmt.Sprintf("ERROR: cannot init Jaeger: %v\n", err))
 	}
 	opentracing.SetGlobalTracer(Tracer)
-	return Tracer, Closer, Error
+	return Tracer, closer, err
 }
 
 type MDReaderWriter struct {
@@ -55,14 +55,14 @@ type MDReaderWriter struct {
 }
 
 // ClientInterceptor grpc client
-func ClientInterceptor(tracer opentracing.Tracer, parentContext context.Context) grpc.UnaryClientInterceptor {
+func ClientInterceptor(tracer opentracing.Tracer, ctx1 context.Context) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string,
 
 		req, reply interface{}, cc *grpc.ClientConn,
 		invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 
 		span, _ := opentracing.StartSpanFromContext(
-			parentContext,
+			ctx1,
 			"call gRPC",
 			opentracing.Tag{Key: string(ext.Component), Value: "gRPC"},
 			ext.SpanKindRPCClient,
@@ -116,6 +116,8 @@ func serverInterceptor(tracer opentracing.Tracer) grpc.UnaryServerInterceptor {
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler) (resp interface{}, err error) {
 
+		var parentContext context.Context
+
 		md, ok := metadata.FromIncomingContext(ctx)
 		if !ok {
 			md = metadata.New(nil)
@@ -133,9 +135,9 @@ func serverInterceptor(tracer opentracing.Tracer) grpc.UnaryServerInterceptor {
 			)
 			defer span.Finish()
 
-			ParentContext = opentracing.ContextWithSpan(ctx, span)
+			parentContext = opentracing.ContextWithSpan(ctx, span)
 		}
 
-		return handler(ParentContext, req)
+		return handler(parentContext, req)
 	}
 }

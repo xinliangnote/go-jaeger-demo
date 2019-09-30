@@ -6,34 +6,33 @@ import (
 	"github.com/opentracing/opentracing-go/ext"
 	"sing/app/config"
 	"sing/app/util/jaeger_trace"
-	"io"
 )
-
-var Tracer opentracing.Tracer
-var Closer io.Closer
-var Error  error
-
-var ParentSpan    opentracing.Span
 
 func SetUp() gin.HandlerFunc {
 
 	return func(c *gin.Context) {
-		Tracer, Closer, Error = jaeger_trace.NewJaegerTracer(config.AppName, config.JaegerHostPort)
-		defer Closer.Close()
+		tracer, closer := jaeger_trace.NewJaegerTracer(config.AppName, config.JaegerHostPort)
+		defer closer.Close()
+
+		var parentSpan opentracing.Span
 
 		spCtx, err := opentracing.GlobalTracer().Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(c.Request.Header))
 		if err != nil {
-			ParentSpan = Tracer.StartSpan(c.Request.URL.Path)
-			defer ParentSpan.Finish()
+			parentSpan = tracer.StartSpan(c.Request.URL.Path)
+			defer parentSpan.Finish()
 		} else {
-			ParentSpan = opentracing.StartSpan(
+			parentSpan = opentracing.StartSpan(
 				c.Request.URL.Path,
 				opentracing.ChildOf(spCtx),
 				opentracing.Tag{Key: string(ext.Component), Value: "HTTP"},
 				ext.SpanKindRPCServer,
-				)
-			defer ParentSpan.Finish()
+			)
+			defer parentSpan.Finish()
 		}
+
+		c.Set("Tracer", tracer)
+		c.Set("ParentSpanContext", parentSpan.Context())
+
 		c.Next()
 	}
 }
